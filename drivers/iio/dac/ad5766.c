@@ -358,6 +358,8 @@ static ssize_t ad5766_set_span_range(struct device *dev,
 	long span_range;
 	int ret;
 
+	printk("ad5766_set_span_range %s\n", buf);
+
 	span_range = sysfs_match_string(ad5766_span_ranges, buf);
 	if (span_range < 0)
 		return span_range;
@@ -452,26 +454,106 @@ static int ad5766_write(struct iio_dev *indio_dev, u8 dac, u16 data)
 	return ret;
 }
 
+static int ad5766_set_offset(struct ad5766_state *st, int val, int val2)
+{
+	int i, ret;
+
+	for (i = 0; i < AD5766_VOLTAGE_RANGE_MAX; i++)
+	{
+		if (st->offset_avail[i][0] == val && st->offset_avail[i][1] == val2)	
+		{
+			ret = _ad5766_spi_write(st, AD5766_CMD_SW_FULL_RESET, AD5766_FULL_RESET_CODE);
+			if (ret < 0)
+				return ret;
+			
+			ret = _ad5766_spi_write(st, AD5766_CMD_SPAN_REG, i);
+			if (ret < 0)
+				return ret;
+
+			st->crt_range = i;
+			ret = ad5766_set_scale_avail(st);
+			if (ret)
+				return ret;
+
+			break;
+		}
+	}
+
+	return 0;
+}
+
+static int ad5766_get_scale_idx(struct ad5766_state *st, int val, int val2, int avail_idx, int *idx)
+{
+	int i;
+
+	for (i = 0; i < AD5766_VOLTAGE_RANGE_MAX; i++)
+	{
+		if (st->crt_scale_avail[avail_idx][0] == st->scale_avail[i][0] && st->crt_scale_avail[avail_idx][1] == st->scale_avail[i][1])
+		{
+			*idx = i;
+
+			return 0;
+		}
+	}	
+
+	return -EINVAL;
+}
+
+static int ad5766_set_scale(struct ad5766_state *st, int val, int val2)
+{
+	int i, scale_idx, ret;
+
+	for (i = 0; i < st->crt_scales_avail; i++)
+	{
+		if (st->crt_scale_avail[i][0] == val && st->crt_scale_avail[i][1] == val2)
+		{
+			ret = ad5766_get_scale_idx(st, val, val2, i, &scale_idx);
+			if (ret < 0)
+				return ret;
+			
+			ret = _ad5766_spi_write(st, AD5766_CMD_SW_FULL_RESET, AD5766_FULL_RESET_CODE);
+			if (ret < 0)
+				return ret;
+			
+			ret = _ad5766_spi_write(st, AD5766_CMD_SPAN_REG, scale_idx);
+			if (ret < 0)
+				return ret;
+
+			st->crt_range = scale_idx;
+			ret = ad5766_set_scale_avail(st);
+			if (ret)
+				return ret;
+
+			break;
+		}
+	}
+
+	return 0;
+}
+
 static int ad5766_write_raw(struct iio_dev *indio_dev,
 			    struct iio_chan_spec const *chan,
 			    int val,
 			    int val2,
 			    long info)
 {
+	struct ad5766_state *st = iio_priv(indio_dev);
 	const int max_val = (1 << chan->scan_type.realbits);
-	// printk("ad5766_write_raw\n");
+
+	printk("ad5766_write_raw\n");
+
 	switch (info) {
 	case IIO_CHAN_INFO_RAW:
 		if (val >= max_val || val < 0)
 			return -EINVAL;
 		val <<= chan->scan_type.shift;
 		break;
-	case IIO_CHAN_INFO_OFFSET:
-		// printk("IIO_CHAN_INFO_OFFSET val: %d, val2: %d\n", val, val2);
-		break;
+	case IIO_CHAN_INFO_OFFSET:	
+		printk("ad5766_write_raw OFFSET %d, %d\n", val, val2);
+		return ad5766_set_offset(st, val, val2);	
 	case IIO_CHAN_INFO_SCALE:
-		// printk("IIO_CHAN_INFO_SCALE val: %d, val2: %d\n", val, val2);
-		break;
+		printk("ad5766_write_raw SCALE %d, %d\n", val, val2);
+		return ad5766_set_scale(st, val, val2);
 	default:
 		return -EINVAL;
 	}
